@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Study Reader</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, "Noto Sans Bengali", sans-serif; background: linear-gradient(160deg,#eef2ff 0%,#f3f4f6 40%,#fdf4ff 100%); color: #111; }
+  button { cursor: pointer; padding: 8px 14px; border: none; border-radius: 8px; background: linear-gradient(135deg,#4f46e5,#7c3aed); color: #fff; font-size: 14px; box-shadow: 0 1px 3px rgba(79,70,229,.35); }
+  button.ghost { background: #eef2ff; color: #4338ca; box-shadow: none; }
+  button.danger { background: linear-gradient(135deg,#dc2626,#f43f5e); }
+  input, textarea { width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; margin-bottom: 8px; }
+  .hidden { display: none !important; }
+  .auth { max-width: 360px; margin: 80px auto; background: #fff; padding: 24px; border-radius: 14px; box-shadow: 0 8px 24px rgba(79,70,229,.18); border-top: 6px solid #4f46e5; }
+  .auth h2 { color: #4f46e5; margin-top: 0; }
+  header { background: linear-gradient(90deg,#4f46e5,#7c3aed); padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; color: #fff; }
+  .library { padding: 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+  .card { background: #fff; padding: 16px; border-radius: 12px; box-shadow: 0 2px 8px rgba(79,70,229,.10); border-left: 5px solid #7c3aed; transition: transform .15s; }
+  .card:hover { transform: translateY(-2px); }
+  .card h3 { margin: 0 0 6px; font-size: 16px; color: #4338ca; }
+  .card small { color: #6b7280; }
+  .reader { display: grid; grid-template-columns: 1fr 340px; height: calc(100vh - 53px); }
+  .viewer { overflow: auto; padding: 20px; text-align: center; }
+  .page-wrap { position: relative; display: inline-block; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
+  .page-wrap canvas { display: block; }
+  .textLayer { position: absolute; inset: 0; overflow: hidden; line-height: 1; }
+  .textLayer span { color: transparent; position: absolute; white-space: pre; transform-origin: 0 0; user-select: text; -webkit-user-select: text; cursor: text; }
+  .textLayer ::selection { background: rgba(79,70,229,.3); }
+  .hl-rect { position: absolute; pointer-events: none; mix-blend-mode: multiply; }
+  .side { background: #fff; border-left: 1px solid #e5e7eb; display: flex; flex-direction: column; overflow: hidden; }
+  @media (max-width: 800px) { .reader { grid-template-columns: 1fr; } .side { border-left: none; border-top: 1px solid #e5e7eb; max-height: 45vh; } }
+  .tabs { display: flex; border-bottom: 1px solid #e5e7eb; }
+  .tabs button { flex: 1; border-radius: 0; background: #fff; color: #374151; }
+  .tabs button.active { background: #4f46e5; color: #fff; font-weight: 600; }
+  .panel { flex: 1; overflow-y: auto; padding: 12px; }
+  .hl-item { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; margin-bottom: 10px; background: #fffbeb; }
+  .hl-item blockquote { margin: 0 0 8px; padding-left: 8px; border-left: 3px solid #fde047; font-size: 14px; }
+  .note { background: #eef2ff; padding: 6px 8px; border-radius: 8px; margin: 4px 0; font-size: 13px; white-space: pre-wrap; }
+  .msg { padding: 8px 10px; border-radius: 8px; margin-bottom: 8px; font-size: 14px; white-space: pre-wrap; }
+  .msg.user { background: linear-gradient(135deg,#e0e7ff,#ede9fe); margin-left: 20px; border-radius: 12px 12px 4px 12px; }
+  .msg.assistant { background: #f9fafb; margin-right: 20px; border: 1px solid #e5e7eb; border-radius: 12px 12px 12px 4px; }
+  .controls { display: flex; gap: 8px; align-items: center; justify-content: center; margin-bottom: 12px; }
+  .error { color: #dc2626; font-size: 13px; }
+  .toolbar-pop { position: absolute; background: #111; color: #fff; padding: 6px; border-radius: 8px; display: flex; gap: 6px; z-index: 10; }
+  .toolbar-pop button { padding: 4px 8px; font-size: 13px; }
+  .c-wrap { display: flex; gap: 4px; align-items: center; }
+  .c-btn { width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 2px solid #fff; box-shadow: none; }
+  .c-btn.on { outline: 2px solid #4f46e5; outline-offset: 1px; }
+  /* ===== Visual polish ===== */
+  body { font-family: "Noto Sans Bengali", system-ui, sans-serif; line-height: 1.5; }
+  button { transition: transform .12s, box-shadow .2s, filter .2s; font-weight: 600; letter-spacing: .1px; border-radius: 10px; }
+  button:hover { filter: brightness(1.06); box-shadow: 0 4px 12px rgba(79,70,229,.3); }
+  button:active { transform: scale(.97); }
+  button.ghost { border: 1px solid #e0e7ff; }
+  button.ghost:hover { background: #e0e7ff; }
+  input:focus, textarea:focus { outline: none; border-color: #7c3aed; box-shadow: 0 0 0 3px rgba(124,58,237,.18); }
+  textarea { border-radius: 10px; }
+  .auth { border-radius: 18px; border-top: none; background: linear-gradient(#fff,#faf5ff); }
+  .auth h2 { font-size: 22px; text-align: center; margin-bottom: 18px; }
+  .auth input { padding: 11px 12px; border-radius: 10px; }
+  .auth button { width: 100%; padding: 11px; margin-top: 4px; }
+  header { border-radius: 0 0 16px 16px; box-shadow: 0 4px 14px rgba(124,58,237,.25); }
+  .card { border-radius: 16px; border-left: none; background: linear-gradient(#fff,#faf5ff); box-shadow: 0 4px 14px rgba(124,58,237,.12); position: relative; overflow: hidden; }
+  .card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: linear-gradient(#7c3aed,#ec4899); }
+  .card:hover { transform: translateY(-3px); box-shadow: 0 10px 24px rgba(124,58,237,.2); }
+  .card h3 { font-size: 17px; }
+  .viewer { background: #e9e5f5; }
+  .page-wrap { border-radius: 6px; overflow: hidden; }
+  .side { background: #fcfbff; }
+  .tabs button { padding: 12px 8px; border-radius: 0; font-size: 14px; }
+  .tabs button.active { background: linear-gradient(135deg,#4f46e5,#7c3aed); }
+  .panel { padding: 14px; }
+  .hl-item { border-radius: 14px; background: #fff; box-shadow: 0 2px 8px rgba(124,58,237,.08); border: 1px solid #ede9fe; margin-bottom: 14px; padding: 12px; }
+  .hl-item blockquote { border-left-width: 4px; border-radius: 0 8px 8px 0; background: #faf5ff; padding: 8px 10px; }
+  .note { border-radius: 10px; background: linear-gradient(135deg,#eef2ff,#fdf4ff); border: 1px solid #e9d5ff; }
+  .hl-item textarea { background: #fafafa; }
+  .msg { border-radius: 14px; padding: 10px 12px; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  .msg.user { background: linear-gradient(135deg,#7c3aed,#6366f1); color: #fff; }
+  .msg.assistant { background: #fff; }
+  #chatMessages { padding-bottom: 6px; }
+  .toolbar-pop { border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.25); padding: 8px; background: #1e1b4b; align-items: center; }
+  .error { font-weight: 500; }
+  #pageInfo { background: rgba(255,255,255,.18); padding: 4px 12px; border-radius: 999px; color: #fff; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<!-- AUTH -->
+<div id="authView" class="auth">
+  <h2>Study Reader</h2>
+  <input id="email" type="email" placeholder="Email">
+  <input id="password" type="password" placeholder="Password (কমপক্ষে ৬ অক্ষর)">
+  <div id="authError" class="error"></div>
+  <button id="loginBtn">Login</button>
+  <button id="signupBtn" class="ghost">Sign up</button>
+</div>
+
+<!-- LIBRARY -->
+<div id="libraryView" class="hidden">
+  <header>
+    <strong>📚 আমার বইসমূহ</strong>
+    <div>
+      <input type="file" id="fileInput" accept="application/pdf" class="hidden">
+      <button id="uploadBtn">+ PDF যোগ করুন</button>
+      <button id="logoutBtn" class="ghost">Logout</button>
+    </div>
+  </header>
+  <div id="libError" class="error" style="padding:0 20px"></div>
+  <div id="bookGrid" class="library"></div>
+</div>
+
+<!-- READER -->
+<div id="readerView" class="hidden">
+  <header>
+    <div>
+      <button id="backBtn" class="ghost">← ফিরে যান</button>
+      <strong id="bookTitle" style="margin-left:10px"></strong>
+    </div>
+    <div class="controls" style="margin:0">
+      <button id="prevBtn" class="ghost">◀</button>
+      <span id="pageInfo"></span>
+      <button id="nextBtn" class="ghost">▶</button>
+    </div>
+  </header>
+  <div class="reader">
+    <div class="viewer" id="viewer">
+      <div class="page-wrap" id="pageWrap">
+        <canvas id="pdfCanvas"></canvas>
+        <div class="textLayer" id="textLayer"></div>
+      </div>
+    </div>
+    <div class="side">
+      <div class="tabs">
+        <button id="tabNotes" class="active">হাইলাইট ও নোট</button>
+        <button id="tabChat">AI চ্যাট</button>
+      </div>
+      <div id="notesPanel" class="panel"></div>
+      <div id="chatPanel" class="panel hidden">
+        <div id="chatMessages"></div>
+        <textarea id="chatInput" rows="3" placeholder="প্রশ্ন লিখুন..."></textarea>
+        <button id="chatSend">পাঠান</button>
+        <button id="aiKeyBtn" class="ghost">🔑 AI কী সেট</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Selection popup -->
+<div id="selPop" class="toolbar-pop hidden">
+  <button id="hlBtn">হাইলাইট</button>
+  <span class="c-wrap">
+    <button class="c-btn" data-c="#fde047" style="background:#fde047"></button>
+    <button class="c-btn" data-c="#86efac" style="background:#86efac"></button>
+    <button class="c-btn" data-c="#93c5fd" style="background:#93c5fd"></button>
+    <button class="c-btn" data-c="#f9a8d4" style="background:#f9a8d4"></button>
+  </span>
+  <button id="vidBtn" class="ghost">ভিডিও খোঁজো</button>
+</div>
+
+<script>
+// ================= CONFIG =================
+const SUPABASE_URL = "https://kvrdjsomnqeiurjfpccp.supabase.co";
+const SUPABASE_KEY = "sb_publishable_25eu1pbIkv_mFHKpDiFDEw_bwIvD-VY";
+const BUCKET = "books";
+// ==========================================
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+let user = null;
+let currentBook = null;
+let pdfDoc = null;
+let currentPage = 1;
+let pageHighlights = [];
+let allHighlights = [];
+let pendingSel = null;
+let chatSession = null;
+
+const $ = id => document.getElementById(id);
+const show = (id, on) => $(id).classList.toggle("hidden", !on);
+
+function showView(name) {
+  show("authView", name === "auth");
+  show("libraryView", name === "library");
+  show("readerView", name === "reader");
+}
+
+// ================= AUTH =================
+async function init() {
+  const { data } = await sb.auth.getSession();
+  if (data.session) { user = data.session.user; showLibrary(); }
+  else showView("auth");
+}
+
+$("signupBtn").onclick = async () => {
+  const { error } = await sb.auth.signUp({ email: $("email").value, password: $("password").value });
+  $("authError").textContent = error ? error.message : "Signup হয়েছে। Email confirm করুন (যদি চালু থাকে) তারপর login করুন।";
+};
+
+$("loginBtn").onclick = async () => {
+  const { data, error } = await sb.auth.signInWithPassword({ email: $("email").value, password: $("password").value });
+  if (error) { $("authError").textContent = error.message; return; }
+  user = data.user;
+  showLibrary();
+};
+
+$("logoutBtn").onclick = async () => { await sb.auth.signOut(); user = null; showView("auth"); };
+
+// ================= LIBRARY =================
+async function showLibrary() {
+  showView("library");
+  await loadBooks();
+}
+
+async function loadBooks() {
+  const { data, error } = await sb.from("books").select("*").order("created_at", { ascending: false });
+  if (error) { $("libError").textContent = error.message; return; }
+  const grid = $("bookGrid");
+  grid.innerHTML = "";
+  if (!data.length) grid.innerHTML = "<p>এখনো কোনো বই নেই। PDF যোগ করুন।</p>";
+  data.forEach(b => {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `<h3></h3><small></small><div style="margin-top:10px;display:flex;gap:6px"></div>`;
+    card.querySelector("h3").textContent = b.title;
+    card.querySelector("small").textContent = `${b.author || "লেখক অজানা"} • পেজ ${b.last_page || 1}/${b.total_pages || "?"}`;
+    const row = card.querySelector("div");
+    const open = document.createElement("button");
+    open.textContent = "পড়ুন";
+    open.onclick = () => openBook(b);
+    const del = document.createElement("button");
+    del.textContent = "মুছুন";
+    del.className = "danger";
+    del.onclick = () => deleteBook(b);
+    row.append(open, del);
+    grid.appendChild(card);
+  });
+}
+
+$("uploadBtn").onclick = () => $("fileInput").click();
+
+$("fileInput").onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  $("libError").textContent = "আপলোড হচ্ছে...";
+  const title = prompt("বইয়ের নাম:", file.name.replace(/\.pdf$/i, "")) || file.name;
+  const author = prompt("লেখকের নাম (ঐচ্ছিক):", "") || null;
+
+  const path = `${user.id}/${crypto.randomUUID()}.pdf`;
+  const { error: upErr } = await sb.storage.from(BUCKET).upload(path, file, { contentType: "application/pdf" });
+  if (upErr) { $("libError").textContent = upErr.message; return; }
+
+  // মোট পেজ সংখ্যা বের করা
+  const buf = await file.arrayBuffer();
+  const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+
+  const { error } = await sb.from("books").insert({
+    user_id: user.id, title, author, file_path: path, total_pages: doc.numPages, last_page: 1
+  });
+  $("libError").textContent = error ? error.message : "";
+  e.target.value = "";
+  loadBooks();
+};
+
+async function deleteBook(b) {
+  if (!confirm(`"${b.title}" মুছে ফেলবেন?`)) return;
+  await sb.storage.from(BUCKET).remove([b.file_path]);
+  await sb.from("books").delete().eq("id", b.id);
+  loadBooks();
+}
+
+// ================= READER =================
+async function openBook(book) {
+  currentBook = book;
+  currentPage = book.last_page || 1;
+  $("bookTitle").textContent = book.title;
+  showView("reader");
+
+  const { data, error } = await sb.storage.from(BUCKET).createSignedUrl(book.file_path, 3600);
+  if (error) { alert(error.message); return; }
+  pdfDoc = await pdfjsLib.getDocument(data.signedUrl).promise;
+
+  await loadAllHighlights();
+  await loadChatSession();
+  renderPage(currentPage);
+  loadNotesPanel();
+}
+
+async function loadAllHighlights() {
+  const { data } = await sb.from("highlights").select("*").eq("book_id", currentBook.id);
+  allHighlights = data || [];
+}
+
+// ================= OCR (স্ক্যান করা পেজের জন্য) =================
+let ocrWorker = null;
+const ocrCache = {}; // pageNo -> { text, words }
+
+async function getOcrWorker() {
+  if (!ocrWorker) ocrWorker = await Tesseract.createWorker(["ben", "eng"]);
+  return ocrWorker;
+}
+
+async function ocrPage(pageNo, canvas) {
+  if (ocrCache[pageNo]) return ocrCache[pageNo];
+  const worker = await getOcrWorker();
+  const { data } = await worker.recognize(canvas);
+  ocrCache[pageNo] = { text: data.text, words: (data.words || []).filter(w => w.text && w.text.trim()) };
+  return ocrCache[pageNo];
+}
+
+// OCR-এর শব্দগুলো অদৃশ্য স্প্যানে বসানো, যাতে মাউস/আঙুল দিয়ে সিলেক্ট ও হাইলাইট করা যায়
+function drawOcrLayer(words, textLayer) {
+  words.forEach(w => {
+    const b = w.bbox;
+    const h = b.y1 - b.y0;
+    const s = document.createElement("span");
+    s.textContent = w.text + " ";
+    s.style.left = b.x0 + "px";
+    s.style.top = b.y0 + "px";
+    s.style.width = (b.x1 - b.x0) + "px";
+    s.style.height = h + "px";
+    s.style.fontSize = (h * 0.9) + "px";
+    s.style.lineHeight = h + "px";
+    textLayer.appendChild(s);
+  });
+}
+
+async function renderPage(n) {
+  if (!pdfDoc) return;
+  currentPage = Math.max(1, Math.min(n, pdfDoc.numPages));
+  $("pageInfo").textContent = `পেজ ${currentPage} / ${pdfDoc.numPages}`;
+
+  const page = await pdfDoc.getPage(currentPage);
+  const scale = 1.4;
+  const viewport = page.getViewport({ scale });
+  const canvas = $("pdfCanvas");
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  const wrap = $("pageWrap");
+  wrap.style.width = viewport.width + "px";
+  wrap.style.height = viewport.height + "px";
+
+  await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+
+  // Text layer (selection-এর জন্য)
+  const textLayer = $("textLayer");
+  textLayer.innerHTML = "";
+  textLayer.style.width = viewport.width + "px";
+  textLayer.style.height = viewport.height + "px";
+  const pageNo = currentPage;
+  const textContent = await page.getTextContent();
+  const hasText = textContent.items.map(i => i.str).join("").trim().length > 20;
+
+  if (hasText) {
+    pdfjsLib.renderTextLayer({ textContent, container: textLayer, viewport, textDivs: [] });
+  } else {
+    // স্ক্যান করা পেজ: OCR দিয়ে লেখা বের করা
+    try {
+      $("pageInfo").textContent = `পেজ ${currentPage} / ${pdfDoc.numPages} · লেখা পড়া হচ্ছে...`;
+      const res = await ocrPage(pageNo, canvas);
+      if (pageNo !== currentPage) return; // ইতিমধ্যে অন্য পেজে চলে গেলে
+      drawOcrLayer(res.words, textLayer);
+      $("pageInfo").textContent = `পেজ ${currentPage} / ${pdfDoc.numPages}`;
+    } catch (err) {
+      $("pageInfo").textContent = `পেজ ${currentPage} / ${pdfDoc.numPages} · লেখা পড়া যায়নি`;
+    }
+  }
+
+  // এই পেজের হাইলাইট আঁকা (রেকট্যাঙ্গল normalized, তাই scale বদলালেও ঠিক থাকে)
+  pageHighlights = allHighlights.filter(h => h.page_number === currentPage);
+  pageHighlights.forEach(h => {
+    (h.position?.rects || []).forEach(r => {
+      const div = document.createElement("div");
+      div.className = "hl-rect";
+      div.style.left = r.x * viewport.width + "px";
+      div.style.top = r.y * viewport.height + "px";
+      div.style.width = r.w * viewport.width + "px";
+      div.style.height = r.h * viewport.height + "px";
+      div.style.background = h.color || "#fde047";
+      div.style.opacity = "0.5";
+      wrap.appendChild(div);
+    });
+  });
+
+  sb.from("books").update({ last_page: currentPage }).eq("id", currentBook.id);
+  loadNotesPanel();
+}
+
+$("prevBtn").onclick = () => renderPage(currentPage - 1);
+$("nextBtn").onclick = () => renderPage(currentPage + 1);
+
+// ================= SWIPE: পেজ ঘোরানো =================
+let swX = 0, swY = 0, swT = 0;
+const viewerEl = document.getElementById("viewer");
+viewerEl.addEventListener("touchstart", (e) => {
+  if (e.touches.length !== 1) return;
+  swX = e.touches[0].clientX; swY = e.touches[0].clientY; swT = Date.now();
+}, { passive: true });
+viewerEl.addEventListener("touchend", (e) => {
+  if (!swX || Date.now() - swT > 800) return;
+  const dx = e.changedTouches[0].clientX - swX;
+  const dy = e.changedTouches[0].clientY - swY;
+  if (Math.abs(dy) > 70 && Math.abs(dy) > Math.abs(dx) * 1.5) {
+    if (dy < 0) renderPage(currentPage + 1); else renderPage(currentPage - 1);
+  }
+  swX = 0;
+}, { passive: true });
+
+// PC: কীবোর্ডের ↓ ↑ (বা PageDown/PageUp) দিয়ে পেজ বদলানো
+document.addEventListener("keydown", (e) => {
+  if ($("readerView").classList.contains("hidden")) return;
+  if (["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+  if (e.key === "ArrowDown" || e.key === "PageDown") { e.preventDefault(); renderPage(currentPage + 1); }
+  else if (e.key === "ArrowUp" || e.key === "PageUp") { e.preventDefault(); renderPage(currentPage - 1); }
+});
+
+// PC: মাউস হুইল দিয়ে উপর-নিচে "swipe" — পেজের শেষে নিচে ঘুরালে পরের পেজ, শুরুতে উপরে ঘুরালে আগের পেজ
+let wheelLock = 0;
+viewerEl.addEventListener("wheel", (e) => {
+  if (Date.now() < wheelLock) return;
+  const atBottom = viewerEl.scrollTop + viewerEl.clientHeight >= viewerEl.scrollHeight - 5;
+  const atTop = viewerEl.scrollTop <= 0;
+  if (e.deltaY > 0 && atBottom) { renderPage(currentPage + 1); wheelLock = Date.now() + 800; }
+  else if (e.deltaY < 0 && atTop) { renderPage(currentPage - 1); wheelLock = Date.now() + 800; }
+}, { passive: true });
+
+$("backBtn").onclick = () => { pdfDoc = null; showLibrary(); };
+
+// ================= HIGHLIGHT =================
+let selTimer = null;
+function handleSelection(px, py) {
+  const sel = window.getSelection();
+  const text = sel ? sel.toString().trim() : "";
+  if (!text || !$("textLayer").contains(sel.anchorNode)) { show("selPop", false); return; }
+  if (sel.rangeCount === 0) return;
+
+  const wrapRect = $("pageWrap").getBoundingClientRect();
+  const rects = [...sel.getRangeAt(0).getClientRects()].filter(r => r.width > 1).map(r => ({
+    x: (r.left - wrapRect.left) / wrapRect.width,
+    y: (r.top - wrapRect.top) / wrapRect.height,
+    w: r.width / wrapRect.width,
+    h: r.height / wrapRect.height
+  }));
+  if (!rects.length) return;
+  pendingSel = { text, rects };
+
+  const range = sel.getRangeAt(0);
+  const rr = range.getBoundingClientRect();
+  const pop = $("selPop");
+  pop.style.left = (px != null ? px : rr.left + window.scrollX) + "px";
+  pop.style.top = ((py != null ? py - 45 : rr.top + window.scrollY - 45)) + "px";
+  show("selPop", true);
+}
+document.addEventListener("mouseup", (e) => handleSelection(e.pageX, e.pageY));
+document.addEventListener("selectionchange", () => {
+  clearTimeout(selTimer);
+  selTimer = setTimeout(() => {
+    const sel = window.getSelection();
+    if (sel && sel.toString().trim() && $("textLayer").contains(sel.anchorNode)) handleSelection();
+    else show("selPop", false);
+  }, 350);
+});
+// ফোনে লম্বা চাপ দিয়ে লেখা সিলেক্ট করলে পপআপ দেখাও
+document.addEventListener("touchend", (e) => {
+  const sel = window.getSelection();
+  if (sel && sel.toString().trim() && $("textLayer").contains(sel.anchorNode)) {
+    const t = e.changedTouches[0];
+    setTimeout(() => handleSelection(t ? t.pageX : null, t ? t.pageY : null), 200);
+  }
+});
+
+// রঙ বাছাই
+let pendingColor = "#fde047";
+document.querySelectorAll(".c-btn").forEach(btn => {
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    pendingColor = btn.dataset.c;
+    document.querySelectorAll(".c-btn").forEach(b => b.classList.toggle("on", b === btn));
+  };
+});
+document.querySelector(`.c-btn[data-c="${pendingColor}"]`).classList.add("on");
+
+$("hlBtn").onclick = async () => {
+  if (!pendingSel) return;
+  const { data, error } = await sb.from("highlights").insert({
+    user_id: user.id,
+    book_id: currentBook.id,
+    page_number: currentPage,
+    selected_text: pendingSel.text,
+    color: pendingColor,
+    position: { rects: pendingSel.rects }
+  }).select().single();
+  if (error) { alert(error.message); return; }
+  allHighlights.push(data);
+  pendingSel = null;
+  show("selPop", false);
+  window.getSelection().removeAllRanges();
+  renderPage(currentPage);
+};
+
+// ================= YOUTUBE VIDEO SEARCH =================
+// টপিক নিয়ে YouTube-এ টিউটোরিয়াল খোঁজে (নতুন ট্যাবে খুলবে, মোবাইলেও কাজ করে)
+function openVideos(topic) {
+  // লম্বা লেখা না দিয়ে প্রথম কয়েকটা শব্দ দিয়ে ছোট সার্চ — ফল বেশি মিলবে
+  const short = (topic || "").replace(/\s+/g, " ").trim().split(" ").slice(0, 6).join(" ");
+  if (!short) { alert("আগে কোনো লেখা সিলেক্ট করুন।"); return; }
+  const q = prompt("YouTube-এ কী খুঁজবেন? (ছোট কিওয়ার্ড ভালো ফল দেয়, চাইলে বদলান)", short + " tutorial");
+  if (!q || !q.trim()) return;
+  window.open("https://www.youtube.com/results?search_query=" + encodeURIComponent(q.trim()), "_blank", "noopener");
+}
+$("vidBtn").onclick = () => { if (pendingSel) openVideos(pendingSel.text); };
+
+// ================= NOTES =================
+async function loadNotesPanel() {
+  const panel = $("notesPanel");
+  panel.innerHTML = "";
+  if (!pageHighlights.length) { panel.innerHTML = "<p style='color:#6b7280'>এই পেজে কোনো হাইলাইট নেই।</p>"; return; }
+
+  const pageVid = document.createElement("button");
+  pageVid.textContent = "📺 এই পেজের বিষয়ে ভিডিও খোঁজো";
+  pageVid.className = "ghost";
+  pageVid.style.marginBottom = "10px";
+  pageVid.onclick = () => openVideos(pageHighlights.map(h => h.selected_text).join(" ").slice(0, 100));
+  panel.appendChild(pageVid);
+
+  const ids = pageHighlights.map(h => h.id);
+  const { data: notes } = await sb.from("highlight_notes").select("*").in("highlight_id", ids).order("created_at");
+
+  pageHighlights.forEach(h => {
+    const item = document.createElement("div");
+    item.className = "hl-item";
+    const q = document.createElement("blockquote");
+    q.textContent = h.selected_text;
+    q.style.borderLeftColor = h.color || "#fde047";
+    item.appendChild(q);
+
+    (notes || []).filter(n => n.highlight_id === h.id).forEach(n => {
+      const d = document.createElement("div");
+      d.className = "note";
+      d.textContent = n.content;
+      item.appendChild(d);
+    });
+
+    const ta = document.createElement("textarea");
+    ta.rows = 2;
+    ta.placeholder = "নোট লিখুন...";
+    const save = document.createElement("button");
+    save.textContent = "নোট সেভ";
+    save.className = "ghost";
+    save.onclick = async () => {
+      if (!ta.value.trim()) return;
+      await sb.from("highlight_notes").insert({ user_id: user.id, highlight_id: h.id, content: ta.value.trim() });
+      loadNotesPanel();
+    };
+    const del = document.createElement("button");
+    del.textContent = "হাইলাইট মুছুন";
+    del.className = "danger";
+    del.style.marginLeft = "6px";
+    del.onclick = async () => {
+      if (!confirm("হাইলাইটটি মুছবেন?")) return;
+      await sb.from("highlights").delete().eq("id", h.id);
+      await loadAllHighlights();
+      renderPage(currentPage);
+    };
+    const vid = document.createElement("button");
+    vid.textContent = "ভিডিও খোঁজো";
+    vid.className = "ghost";
+    vid.style.marginLeft = "6px";
+    vid.onclick = () => openVideos(h.selected_text);
+    item.append(ta, save, vid, del);
+    panel.appendChild(item);
+  });
+}
+
+// ================= AI CHAT =================
+$("tabNotes").onclick = () => { $("tabNotes").classList.add("active"); $("tabChat").classList.remove("active"); show("notesPanel", true); show("chatPanel", false); };
+$("tabChat").onclick = () => { $("tabChat").classList.add("active"); $("tabNotes").classList.remove("active"); show("notesPanel", false); show("chatPanel", true); };
+
+async function loadChatSession() {
+  const { data } = await sb.from("chat_sessions").select("*").eq("book_id", currentBook.id).order("created_at").limit(1);
+  if (data && data.length) chatSession = data[0];
+  else {
+    const { data: s } = await sb.from("chat_sessions").insert({ user_id: user.id, book_id: currentBook.id, title: currentBook.title }).select().single();
+    chatSession = s;
+  }
+  await renderChat();
+}
+
+async function renderChat() {
+  const box = $("chatMessages");
+  box.innerHTML = "";
+  if (!chatSession) return;
+  const { data } = await sb.from("chat_messages").select("*").eq("session_id", chatSession.id).order("created_at");
+  (data || []).forEach(m => {
+    const d = document.createElement("div");
+    d.className = "msg " + m.role;
+    d.textContent = m.content;
+    box.appendChild(d);
+  });
+  box.scrollTop = box.scrollHeight;
+}
+
+$("chatSend").onclick = async () => {
+  const text = $("chatInput").value.trim();
+  if (!text || !chatSession) return;
+  $("chatInput").value = "";
+
+  await sb.from("chat_messages").insert({ session_id: chatSession.id, user_id: user.id, role: "user", content: text });
+  await renderChat();
+
+  // বইয়ের বর্তমান পেজের লেখা context হিসেবে পাঠানো
+  const page = await pdfDoc.getPage(currentPage);
+  const tc = await page.getTextContent();
+  const pageText = (ocrCache[currentPage] ? ocrCache[currentPage].text : tc.items.map(i => i.str).join(" ")).slice(0, 6000);
+
+  const apiKey = localStorage.getItem("gemini_key") || "";
+  let reply;
+  if (!apiKey) reply = "আগে 🔑 AI কী সেট বাটনে চেপে Gemini key বসাও (aistudio.google.com থেকে ফ্রি পাওয়া যায়)।";
+  else {
+    try {
+      // এই পেজের হাইলাইট করা লাইন ও বর্তমান সিলেকশন context হিসেবে যোগ করা
+      const hlTexts = pageHighlights.map(h => "- " + h.selected_text).join("\n");
+      const selText = pendingSel ? pendingSel.text : "";
+      let ctx = "";
+      if (hlTexts) ctx += "\n\nআমার হাইলাইট করা লাইনসমূহ (এই পেজ):\n" + hlTexts;
+      if (selText) ctx += "\n\nআমার বর্তমানে সিলেক্ট করা লেখা:\n" + selText;
+      const prompt = "তুমি একজন বন্ধুত্বপূর্ণ পড়াশোনার সহকারী। বই \"" + currentBook.title + "\"-এর পেজ " + currentPage + "-এর লেখা নিচে দেওয়া হলো। সেই লেখার ভিত্তিতে প্রশ্নের উত্তর দাও, সহজ বাংলায়।\n\nপেজের লেখা:\n" + pageText + ctx + "\n\nপ্রশ্ন: " + text;
+      const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=" + apiKey, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error("AI error " + res.status + ": " + ((json.error && json.error.message) || "অজানা সমস্যা"));
+      reply = (json && json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts && json.candidates[0].content.parts[0].text) || "উত্তর পাওয়া যায়নি।";
+    } catch (err) { reply = "সমস্যা হয়েছে: " + err.message; }
+  }
+
+  await sb.from("chat_messages").insert({ session_id: chatSession.id, user_id: user.id, role: "assistant", content: reply });
+  renderChat();
+};
+
+$("aiKeyBtn").onclick = () => {
+  const k = prompt("Gemini API key (aistudio.google.com থেকে নাও):", localStorage.getItem("gemini_key") || "");
+  if (k !== null) { localStorage.setItem("gemini_key", k.trim()); alert("কী সেভ হয়েছে — এটা শুধু এই ব্রাউজারেই থাকবে, কোথাও পাঠানো হবে না।"); }
+};
+
+// ================= START =================
+init();
+</script>
+</body>
+</html>
